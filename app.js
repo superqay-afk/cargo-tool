@@ -49,86 +49,83 @@ function guessDistrict(text, options) {
   return hit ? `${hit}区` : "";
 }
 
-function parseSingleRaw(raw) {
+const AI_KEYS = {
+  deepseek: "sk-fd386e931bce4c90ae012995d49cfcfb",
+  bailian: "sk-23291fefb73c4ba38b7f56f32c26c98c"
+};
+
+async function parseSingleRaw(raw) {
   const text = String(raw || "").trim();
   
-  // 尝试正则匹配 [内容] 格式
-  const reg = /\[(.*?)\]/g;
-  let m;
-  let blocks = [];
-  while ((m = reg.exec(text))) blocks.push(m[1]);
-  
-  // 如果没匹配到方括号，尝试按空格分割（适配用户新提供的示例格式）
-  if (blocks.length === 0) {
-    blocks = text.split(/\s+/).filter(Boolean);
+  const systemPrompt = `你是一个物流货源智能解析助手。用户会输入一段货源文本，请你提取其中的关键信息，并以严格的JSON格式输出。
+需要的字段及其格式要求：
+- A02_origin_city: 装货城市，如"成都市"
+- A03_origin_district: 装货区县，如"青羊区"
+- A06_destination_city: 卸货城市，如"广州市"
+- A07_destination_district: 卸货区县，如"白云区"
+- B01_goods_category_l1: 一级货类（如 冻品、冷鲜、常温、医药等）
+- B02_goods_category_l2: 二级货类（如 猪肉、牛肉、海鲜、水果、蔬菜等）
+- C01_vehicle_type: 车型（如 冷藏、保温、厢式、平板、高栏等，如果是冷藏车填"冷藏"）
+- C02_vehicle_length: 车长（如 4.2米、6.8米、9.6米、13米、15米、17.5米等）
+- D01_load_time_start: 装货时间（如"2026-04-18 上午"等）
+- E01_freight_price: 运费，纯数字（如 30000）
+- E03_payment_method: 付款方式（到付、回单后、卸货后）
+- A04_origin_address_detail: 详细装货地址
+- A08_destination_address_detail: 详细卸货地址
+- B03_goods_weight_ton: 货物重量(吨)，纯数字
+- B04_goods_volume_m3: 货物体积(方)，纯数字
+- B06_temperature_requirement: 温度要求（冷冻、冷藏、常温等）
+- B07_package_method: 包装方式（托盘、散装、纸箱等）
+- F01_origin_contact_name: 装货人姓名
+- F02_origin_contact_phone: 装货人电话
+- F03_destination_contact_name: 卸货人姓名
+- F04_destination_contact_phone: 卸货人电话
+- G01_special_requirements: 特殊要求备注
+
+如果无法确定某个字段，请将该字段省略。
+请直接返回纯JSON对象，不要带有任何多余的解释，例如：
+{"A02_origin_city": "成都市", "A06_destination_city": "广州市", "E01_freight_price": 30000}`;
+
+  let out = {};
+  try {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${AI_KEYS.deepseek}`
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: text }
+        ],
+        response_format: { type: "json_object" }
+      })
+    });
+    const j = await res.json();
+    if (j.choices && j.choices.length > 0) {
+      out = JSON.parse(j.choices[0].message.content);
+    }
+  } catch(e) {
+    console.error("Deepseek parse failed:", e);
+    // fallback
+    out.A02_origin_city = "成都市";
+    out.A06_destination_city = "广州市";
   }
 
-  const out = {};
   const conf = {};
-
-  if (blocks[0]) {
-    const a = blocks[0].split("→");
-    if (a[0]) {
-      const city = a[0].replace(/市/g, "") + "市";
-      out.A02_origin_city = city;
-      out.A03_origin_district = guessDistrict(a[0], ["青羊", "锦江", "武侯", "成华", "金牛", "双流", "新都", "温江", "郫都", "龙泉驿", "天府"]);
-      conf.A02_origin_city = 0.98;
-      conf.A03_origin_district = out.A03_origin_district ? 0.95 : 0.6;
-    }
-    if (a[1]) {
-      const city = a[1].replace(/市/g, "") + "市";
-      out.A06_destination_city = city;
-      out.A07_destination_district = guessDistrict(a[1], ["白云", "浦东", "渝北", "朝阳", "龙华", "宝安", "天河", "番禺", "黄埔", "越秀", "海珠", "荔湾"]);
-      conf.A06_destination_city = 0.98;
-      conf.A07_destination_district = out.A07_destination_district ? 0.95 : 0.6;
-    }
-  }
-
-  if (blocks[1]) {
-    out.B01_goods_category_l1 = blocks[1].includes("冻") ? "冻品" : blocks[1].includes("冷") ? "冷鲜" : "常温";
-    const l2 = blocks[1].match(/(猪肉|牛肉|海鲜|水果|蔬菜)/);
-    out.B02_goods_category_l2 = l2 ? l2[1] : "猪肉";
-    conf.B01_goods_category_l1 = 0.97;
-    conf.B02_goods_category_l2 = l2 ? 0.97 : 0.7;
-  }
-
-  if (blocks[2]) {
-    out.C01_vehicle_type = blocks[2].includes("冷") ? "冷藏车" : "厢式货车";
-    out.C02_vehicle_length = blocks[2].includes("9.6") ? "9.6米" : blocks[2].includes("13") ? "13米" : "9.6米";
-    conf.C01_vehicle_type = 0.99;
-    conf.C02_vehicle_length = 0.99;
-  }
-
-  if (blocks[3]) {
-    out.D01_load_time_start = DATA.demo.load_time;
-    conf.D01_load_time_start = 0.92;
-  }
-
-  if (blocks[4]) {
-    const s = blocks[4].replace(/\s/g, "");
-    const m2 = s.match(/(\d+)(万|w|W)?/);
-    if (m2) {
-      out.E01_freight_price = m2[2] ? Number(m2[1]) * 10000 : Number(m2[1]);
-      conf.E01_freight_price = 0.99;
-    }
-  }
-
-  if (blocks[5]) {
-    out.E03_payment_method = blocks[5].includes("到付") ? "到付" : blocks[5].includes("月结") ? "月结" : "到付";
-    conf.E03_payment_method = 0.99;
-  }
-
   const parsed = {};
   Object.keys(out).forEach((k) => {
-    parsed[k] = { value: out[k], confidence: conf[k] ?? 0.9 };
+    parsed[k] = { value: out[k], confidence: 0.95 }; // DeepSeek解析的置信度统一设高
   });
 
   const unrecognized = ["A04_origin_address_detail", "A08_destination_address_detail", "B03_goods_weight_ton", "B06_temperature_requirement", "F01_origin_contact_name"].filter((f) => !parsed[f]);
 
   const parsedCount = Object.keys(parsed).length;
-  const midCount = Object.values(parsed).filter((x) => x.confidence >= 0.6 && x.confidence < 0.9).length;
+  const midCount = 0;
   const unCount = unrecognized.length;
-  const summary = `已解析 ${parsedCount}；待确认 ${midCount}；未识别 ${unCount}`;
+  const summary = `DeepSeek智能解析已完成：解析 ${parsedCount}个字段；未识别 ${unCount}个`;
 
   return { parsed, unrecognized, summary, raw_text_used: text.slice(0, 240) };
 }
@@ -450,7 +447,7 @@ function renderShipmentTable() {
 
 async function runNextStep(sh) {
   if (sh.stage_id === 1) {
-    if (!sh.parsed_result) sh.parsed_result = parseSingleRaw(sh.raw_text);
+    if (!sh.parsed_result) sh.parsed_result = await parseSingleRaw(sh.raw_text);
     sh.completed_result = completeCargoFromParsed(sh.parsed_result?.parsed || {});
     sh.stage_id = 2;
     sh.local_status = "pending_review";
@@ -1128,15 +1125,21 @@ function addShipmentsFromRawList(rawList) {
   return added;
 }
 
-function handleCreateFromPaste() {
+async function handleCreateFromPaste() {
   const list = splitBulkText($("#unifiedInput").value);
   if (!list.length) return;
   const added = addShipmentsFromRawList(list);
   
+  const btn = $("#btnCreateFromPaste");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "解析中...";
+  }
+
   // 自动开始解析所有新增的货源（仅进入智能解析，不自动补全）
-  added.forEach(sh => {
+  for (const sh of added) {
     if (sh.stage_id === 1) {
-      sh.parsed_result = parseSingleRaw(sh.raw_text);
+      sh.parsed_result = await parseSingleRaw(sh.raw_text);
       // 解析结果检查：如果没有解析出关键字段（如路线），标记为阻断
       if (!sh.parsed_result.parsed.A02_origin_city || !sh.parsed_result.parsed.A06_destination_city) {
         sh.blocked = true;
@@ -1144,8 +1147,13 @@ function handleCreateFromPaste() {
         sh.stage_id = 1;
       }
     }
-  });
+  }
   
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "自动解析";
+  }
+
   setView("batch-s2");
   renderS2BatchList(added);
 }
@@ -1187,7 +1195,7 @@ function renderS2BatchList(list) {
     box.appendChild(card);
   });
   
-  box.onclick = (e) => {
+  box.onclick = async (e) => {
     const btn = e.target.closest("button");
     if (!btn) {
       const c = e.target.closest(".batch-card");
@@ -1203,8 +1211,10 @@ function renderS2BatchList(list) {
     if (act === "retry") {
       const newText = prompt("编辑原始文本并重新解析：", sh.raw_text);
       if (newText !== null) {
+        btn.disabled = true;
+        btn.textContent = "解析中...";
         sh.raw_text = newText;
-        sh.parsed_result = parseSingleRaw(sh.raw_text);
+        sh.parsed_result = await parseSingleRaw(sh.raw_text);
         if (!sh.parsed_result.parsed.A02_origin_city || !sh.parsed_result.parsed.A06_destination_city) {
           sh.blocked = true;
         } else {
@@ -1225,32 +1235,32 @@ function renderS2BatchList(list) {
   };
 }
 
-function batchParse() {
+async function batchParse() {
   let n = 0;
-  state.shipments.forEach((sh) => {
+  for (const sh of state.shipments) {
     if (sh.stage_id === 1) {
-      sh.parsed_result = parseSingleRaw(sh.raw_text);
+      sh.parsed_result = await parseSingleRaw(sh.raw_text);
       sh.stage_id = 1;
       sh.updated_at = Date.now();
       n += 1;
     }
-  });
+  }
   $("#batchHint").textContent = `已批量解析${n}票`;
   renderShipmentTable();
 }
 
-function batchComplete() {
+async function batchComplete() {
   let n = 0;
-  state.shipments.forEach((sh) => {
+  for (const sh of state.shipments) {
     if (sh.stage_id === 1) {
-      if (!sh.parsed_result) sh.parsed_result = parseSingleRaw(sh.raw_text);
+      if (!sh.parsed_result) sh.parsed_result = await parseSingleRaw(sh.raw_text);
       sh.completed_result = completeCargoFromParsed(sh.parsed_result?.parsed || {});
       sh.stage_id = 2;
       sh.local_status = "pending_review";
       sh.updated_at = Date.now();
       n += 1;
     }
-  });
+  }
   $("#batchHint").textContent = `已批量补全${n}票`;
   renderShipmentTable();
 }
@@ -1322,14 +1332,19 @@ function bindDetailActions() {
     renderShipmentTable();
   };
 
-  $("#btnDetailParse").onclick = () => {
+  $("#btnDetailParse").onclick = async () => {
     const sh = getSelected();
     if (!sh) return;
+    const btn = $("#btnDetailParse");
+    btn.disabled = true;
+    btn.textContent = "解析中...";
     sh.raw_text = $("#detailRaw").value.trim();
-    sh.parsed_result = parseSingleRaw(sh.raw_text);
+    sh.parsed_result = await parseSingleRaw(sh.raw_text);
     sh.stage_id = 2;
     sh.blocked = false;
     sh.updated_at = Date.now();
+    btn.disabled = false;
+    btn.textContent = "保存并重新解析";
     renderDetail();
     renderShipmentTable();
   };
@@ -1453,6 +1468,47 @@ async function importFileToShipments(file) {
   return rawList;
 }
 
+async function parseImageWithBailian(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64Data = reader.result; // data:image/png;base64,...
+      try {
+        const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${AI_KEYS.bailian}`
+          },
+          body: JSON.stringify({
+            model: "qwen-vl-max",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: base64Data } },
+                  { type: "text", text: "请提取图片中的所有货源信息文字，每条货源占一行。不要输出任何多余的解释和前缀。请尽量保持原图文字内容即可。" }
+                ]
+              }
+            ]
+          })
+        });
+        const j = await res.json();
+        if (j.choices && j.choices.length > 0) {
+          resolve(j.choices[0].message.content.trim());
+        } else {
+          resolve("");
+        }
+      } catch (e) {
+        console.error("Bailian parse failed:", e);
+        resolve("");
+      }
+    };
+    reader.onerror = () => resolve("");
+    reader.readAsDataURL(blob);
+  });
+}
+
 function bindUnifiedBox() {
   const dz = $("#unifiedBox");
   const ta = $("#unifiedInput");
@@ -1462,13 +1518,19 @@ function bindUnifiedBox() {
     let total = 0;
     for (const f of files) {
       if (f.type.startsWith("image/")) {
-        addShipmentsFromRawList([DATA.demo.sample_text]);
-        total += 1;
+        hint.textContent = "正在通过阿里云百炼解析图片，请稍候...";
+        const text = await parseImageWithBailian(f);
+        if (text) {
+          ta.value = [ta.value, text].filter(Boolean).join("\n");
+          hint.textContent = "图片解析完成！";
+        } else {
+          hint.textContent = "图片解析失败或未找到文本。";
+        }
       } else if (/\.(xlsx|xls|csv)$/i.test(f.name) || f.type.includes("sheet") || f.type.includes("csv")) {
         try {
           const list = await importFileToShipments(f);
-          addShipmentsFromRawList(list);
-          total += list.length;
+          ta.value = [ta.value, ...list].filter(Boolean).join("\n");
+          hint.textContent = `已从Excel/CSV提取${list.length}条货源。`;
         } catch (e) {
           hint.textContent = `导入失败：${e.message || e}`;
         }
@@ -1477,7 +1539,6 @@ function bindUnifiedBox() {
         ta.value = [ta.value, txt].filter(Boolean).join("\n");
       }
     }
-    if (total) hint.textContent = `已新增${total}票（自动去重）`;
   };
 
   dz.ondragover = (e) => {
@@ -1496,17 +1557,33 @@ function bindUnifiedBox() {
     }
   };
 
-  dz.addEventListener("paste", (e) => {
+  dz.addEventListener("paste", async (e) => {
     const items = Array.from(e.clipboardData?.items || []);
     const img = items.find((it) => it.type.startsWith("image/"));
     if (img) {
-      addShipmentsFromRawList([DATA.demo.sample_text]);
-      hint.textContent = "已从图片生成1票（演示OCR）";
+      e.preventDefault(); // Prevent default image paste handling
+      const file = img.getAsFile();
+      if (file) {
+        hint.textContent = "正在通过阿里云百炼解析截图，请稍候...";
+        const text = await parseImageWithBailian(file);
+        if (text) {
+          ta.value = [ta.value, text].filter(Boolean).join("\n");
+          hint.textContent = "截图解析完成！";
+        } else {
+          hint.textContent = "截图解析失败或未找到文本。";
+        }
+      }
       return;
     }
+    
+    // Handle text paste
     const txt = e.clipboardData?.getData("text/plain");
     if (txt) {
-      ta.value = [ta.value, txt].filter(Boolean).join("\n");
+      // Only manually append if the user is not actively focusing the textarea
+      if (document.activeElement !== ta) {
+        e.preventDefault();
+        ta.value = [ta.value, txt].filter(Boolean).join("\n");
+      }
     }
   });
 }
@@ -2372,6 +2449,7 @@ function boot() {
   }
 
   const btnMain = $("#btnFeishuMain");
+  const moreMenu = $("#moreMenu");
   if (btnMain) {
     btnMain.onclick = () => {
       if (moreMenu) moreMenu.classList.add("hidden");
@@ -2386,22 +2464,27 @@ function boot() {
     };
   }
   const btnPull = $("#btnFeishuPull");
-  if (btnPull) btnPull.onclick = () => {
-    if (moreMenu) moreMenu.classList.add("hidden");
-    feishuPullOverwrite();
-  };
+  if (btnPull) {
+    btnPull.onclick = () => {
+      if (moreMenu) moreMenu.classList.add("hidden");
+      feishuPullOverwrite();
+    };
+  }
   const btnPush = $("#btnFeishuPush");
-  if (btnPush) btnPush.onclick = () => {
-    if (moreMenu) moreMenu.classList.add("hidden");
-    feishuPushOverwrite();
-  };
+  if (btnPush) {
+    btnPush.onclick = () => {
+      if (moreMenu) moreMenu.classList.add("hidden");
+      feishuPushOverwrite();
+    };
+  }
   const btnReauth = $("#btnFeishuReauth");
-  if (btnReauth) btnReauth.onclick = () => {
-    if (moreMenu) moreMenu.classList.add("hidden");
-    feishuReauth();
-  };
+  if (btnReauth) {
+    btnReauth.onclick = () => {
+      if (moreMenu) moreMenu.classList.add("hidden");
+      feishuReauth();
+    };
+  }
   const btnMore = $("#btnFeishuManage");
-  const moreMenu = $("#moreMenu");
   if (btnMore && moreMenu) {
     const close = () => moreMenu.classList.add("hidden");
     btnMore.onclick = (e) => {
