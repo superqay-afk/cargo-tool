@@ -46,8 +46,14 @@ class handler(BaseHTTPRequestHandler):
     access_token = data.get("access_token")
     refresh_tok = data.get("refresh_token")
     expires_in = int(data.get("expires_in") or 0)
+    
+    import json
     if not access_token:
-      redirect(self, tool_url)
+      err_html = f"<html><body><h3>Auth Failed</h3><p>Code: {code}</p><p>Redirect: {redirect_uri}</p><p>Resp: {json.dumps(token_resp, ensure_ascii=False)}</p></body></html>"
+      self.send_response(400)
+      self.send_header("Content-Type", "text/html; charset=utf-8")
+      self.end_headers()
+      self.wfile.write(err_html.encode("utf-8"))
       return
 
     rec = {
