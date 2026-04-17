@@ -21,16 +21,16 @@
           <span id="feishuStatusPill" class="pill yellow">飞书：未连接</span>
           <a id="btnOpenFeishuDoc" class="btn-ghost" href="#" target="_blank" rel="noopener noreferrer">打开飞书文档</a>
           <button id="btnPrefs" class="btn-ghost">偏好设置</button>
-          <div class="dropdown">
-            <button id="btnFeishuManage" class="btn-secondary">飞书管理</button>
-            <div id="moreMenu" class="dropdown-menu hidden">
+          <details id="feishuDropdown" class="dropdown">
+            <summary id="btnFeishuManage" class="btn-secondary">飞书管理</summary>
+            <div id="moreMenu" class="dropdown-menu">
               <button id="btnFeishuMain" class="btn-ghost">连接飞书</button>
               <button id="btnFeishuCheck" class="btn-ghost">检查连接</button>
               <button id="btnFeishuPull" class="btn-ghost">飞书→Web 覆盖</button>
               <button id="btnFeishuPush" class="btn-ghost">Web→飞书 覆盖</button>
               <button id="btnFeishuReauth" class="btn-ghost">重新授权</button>
             </div>
-          </div>
+          </details>
         </div>
       </div>
       <div class="small" id="feishuHint"></div>

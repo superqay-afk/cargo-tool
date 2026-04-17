@@ -343,6 +343,79 @@ class Handler(BaseHTTPRequestHandler):
     except Exception:
       body = {}
 
+    if path == "/api/ai/deepseek_parse":
+      api_key = os.environ.get("DEEPSEEK_API_KEY") or ""
+      if not api_key:
+        self._send_json(400, {"ok": False, "error": "missing_api_key", "message": "缺少 DEEPSEEK_API_KEY"})
+        return
+      text = str(body.get("text") or "").strip()
+      system_prompt = str(body.get("system_prompt") or "").strip()
+      if not text:
+        self._send_json(400, {"ok": False, "error": "missing_text"})
+        return
+      payload = {"model": "deepseek-chat", "messages": [], "response_format": {"type": "json_object"}}
+      if system_prompt:
+        payload["messages"].append({"role": "system", "content": system_prompt})
+      payload["messages"].append({"role": "user", "content": text})
+      resp = _http_json("POST", "https://api.deepseek.com/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, body=payload, timeout_s=35)
+      content = ""
+      try:
+        choices = resp.get("choices") or []
+        if choices:
+          content = (choices[0].get("message") or {}).get("content") or ""
+      except Exception:
+        content = ""
+      if not content:
+        self._send_json(500, {"ok": False, "error": "empty_response"})
+        return
+      try:
+        data = json.loads(content)
+        if not isinstance(data, dict):
+          raise ValueError("not_object")
+      except Exception:
+        self._send_json(500, {"ok": False, "error": "invalid_json"})
+        return
+      self._send_json(200, {"ok": True, "data": data})
+      return
+
+    if path == "/api/ai/bailian_ocr":
+      api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("BAILIAN_API_KEY") or ""
+      if not api_key:
+        self._send_json(400, {"ok": False, "error": "missing_api_key", "message": "缺少 DASHSCOPE_API_KEY/BAILIAN_API_KEY"})
+        return
+      image_data_url = str(body.get("image_data_url") or "").strip()
+      if not image_data_url.startswith("data:image/"):
+        self._send_json(400, {"ok": False, "error": "missing_image"})
+        return
+      payload = {
+        "model": "qwen-vl-max",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {"type": "text", "text": "请提取图片中的所有货源信息文字，每条货源占一行。不要输出任何多余的解释和前缀。请尽量保持原图文字内容即可。"},
+              {"type": "image_url", "image_url": {"url": image_data_url}},
+            ],
+          }
+        ],
+      }
+      resp = _http_json(
+        "POST",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        body=payload,
+        timeout_s=60,
+      )
+      text = ""
+      try:
+        choices = resp.get("choices") or []
+        if choices:
+          text = (choices[0].get("message") or {}).get("content") or ""
+      except Exception:
+        text = ""
+      self._send_json(200, {"ok": True, "text": text})
+      return
+
     if path == "/api/feishu/logout":
       try:
         if os.path.exists(TOKEN_PATH):

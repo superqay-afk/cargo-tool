@@ -33,7 +33,12 @@ def _read_body(handler):
 def _send(handler, status, body_bytes, content_type="application/json; charset=utf-8", headers=None):
   handler.send_response(status)
   handler.send_header("Content-Type", content_type)
-  handler.send_header("Access-Control-Allow-Origin", handler.headers.get("Origin") or "*")
+  origin = handler.headers.get("Origin")
+  if origin:
+    handler.send_header("Access-Control-Allow-Origin", origin)
+    handler.send_header("Access-Control-Allow-Credentials", "true")
+  else:
+    handler.send_header("Access-Control-Allow-Origin", "*")
   handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
   handler.send_header("Access-Control-Allow-Headers", "Content-Type,Authorization")
   if headers:
@@ -239,4 +244,3 @@ def bitable_records_search(app_token, table_id, access_token, body):
 def bitable_records_action(app_token, table_id, access_token, action, body):
   url = f"{FEISHU_BASE_URL}/open-apis/bitable/v1/apps/{urllib.parse.quote(app_token)}/tables/{urllib.parse.quote(table_id)}/records/{urllib.parse.quote(action)}"
   return _http_json("POST", url, headers={"Authorization": f"Bearer {access_token}"}, body=body)
-

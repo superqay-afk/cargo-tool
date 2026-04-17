@@ -49,11 +49,6 @@ function guessDistrict(text, options) {
   return hit ? `${hit}区` : "";
 }
 
-const AI_KEYS = {
-  deepseek: "sk-fd386e931bce4c90ae012995d49cfcfb",
-  bailian: "sk-23291fefb73c4ba38b7f56f32c26c98c"
-};
-
 async function parseSingleRaw(raw) {
   const text = String(raw || "").trim();
   
@@ -88,25 +83,14 @@ async function parseSingleRaw(raw) {
 
   let out = {};
   try {
-    const res = await fetch("https://api.deepseek.com/chat/completions", {
+    const base = feishuBackendBase();
+    const res = await fetch(`${base}/api/ai/deepseek_parse`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${AI_KEYS.deepseek}`
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: text }
-        ],
-        response_format: { type: "json_object" }
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, system_prompt: systemPrompt })
     });
     const j = await res.json();
-    if (j.choices && j.choices.length > 0) {
-      out = JSON.parse(j.choices[0].message.content);
-    }
+    out = j?.data || {};
   } catch(e) {
     console.error("Deepseek parse failed:", e);
     // fallback
@@ -1474,31 +1458,14 @@ async function parseImageWithBailian(blob) {
     reader.onload = async () => {
       const base64Data = reader.result; // data:image/png;base64,...
       try {
-        const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
+        const base = feishuBackendBase();
+        const res = await fetch(`${base}/api/ai/bailian_ocr`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${AI_KEYS.bailian}`
-          },
-          body: JSON.stringify({
-            model: "qwen-vl-max",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "image_url", image_url: { url: base64Data } },
-                  { type: "text", text: "请提取图片中的所有货源信息文字，每条货源占一行。不要输出任何多余的解释和前缀。请尽量保持原图文字内容即可。" }
-                ]
-              }
-            ]
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_data_url: base64Data })
         });
         const j = await res.json();
-        if (j.choices && j.choices.length > 0) {
-          resolve(j.choices[0].message.content.trim());
-        } else {
-          resolve("");
-        }
+        resolve(String(j?.text || "").trim());
       } catch (e) {
         console.error("Bailian parse failed:", e);
         resolve("");
@@ -2449,53 +2416,51 @@ function boot() {
   }
 
   const btnMain = $("#btnFeishuMain");
-  const moreMenu = $("#moreMenu");
+  const dropdown = $("#feishuDropdown");
+  const closeMenu = () => {
+    if (dropdown) dropdown.open = false;
+  };
   if (btnMain) {
     btnMain.onclick = () => {
-      if (moreMenu) moreMenu.classList.add("hidden");
+      closeMenu();
       feishuLogin();
     };
   }
   const btnCheck = $("#btnFeishuCheck");
   if (btnCheck) {
     btnCheck.onclick = () => {
-      if (moreMenu) moreMenu.classList.add("hidden");
+      closeMenu();
       feishuCheck();
     };
   }
   const btnPull = $("#btnFeishuPull");
   if (btnPull) {
     btnPull.onclick = () => {
-      if (moreMenu) moreMenu.classList.add("hidden");
+      closeMenu();
       feishuPullOverwrite();
     };
   }
   const btnPush = $("#btnFeishuPush");
   if (btnPush) {
     btnPush.onclick = () => {
-      if (moreMenu) moreMenu.classList.add("hidden");
+      closeMenu();
       feishuPushOverwrite();
     };
   }
   const btnReauth = $("#btnFeishuReauth");
   if (btnReauth) {
     btnReauth.onclick = () => {
-      if (moreMenu) moreMenu.classList.add("hidden");
+      closeMenu();
       feishuReauth();
     };
   }
-  const btnMore = $("#btnFeishuManage");
-  if (btnMore && moreMenu) {
-    const close = () => moreMenu.classList.add("hidden");
-    btnMore.onclick = (e) => {
-      e.stopPropagation();
-      moreMenu.classList.toggle("hidden");
-    };
-    document.addEventListener("click", close);
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") close();
+  if (dropdown) {
+    document.addEventListener("click", (e) => {
+      if (!dropdown.contains(e.target)) closeMenu();
     });
-    moreMenu.onclick = (e) => e.stopPropagation();
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenu();
+    });
   }
 
   setView("list");
