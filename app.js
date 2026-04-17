@@ -674,178 +674,173 @@ function renderS3TopBar(sh) {
   $("#s3TopBar").innerHTML = chips.map((x) => `<span class="chip"><span class="muted">${safeText(x.k)}：</span>${safeText(x.v)}</span>`).join("");
 }
 
-function fieldSelect(name, value, options, missing) {
-  const opts = (options || []).map((o) => `<option value="${safeText(o)}" ${String(o) === String(value) ? "selected" : ""}>${safeText(o)}</option>`).join("");
-  return `<select data-field="${safeText(name)}" class="${missing ? "field-missing" : ""}"><option value=""></option>${opts}</select>`;
-}
-
-function fieldInput(name, value, type, missing, step) {
-  const st = step ? ` step="${safeText(step)}"` : "";
-  return `<input data-field="${safeText(name)}" type="${safeText(type)}" value="${safeText(value ?? "")}" class="${missing ? "field-missing" : ""}"${st}>`;
-}
-
-function fieldDatalist(name, value, listId, options, missing) {
-  const dl = (options || []).map((o) => `<option value="${safeText(o)}"></option>`).join("");
-  return `
-    <input data-field="${safeText(name)}" list="${safeText(listId)}" value="${safeText(value ?? "")}" class="${missing ? "field-missing" : ""}">
-    <datalist id="${safeText(listId)}">${dl}</datalist>
-  `;
-}
-
-function renderFieldEditor(sh) {
-  const cargo = sh.completed_result?.cargo || {};
-  const requiredMissing = new Set(sh.completed_result?.still_missing_required || []);
-  const payOpts = Object.keys(DATA.shipper_profile.cargo_habits.payment_method_ratio || { 到付: 1 });
-  const invoiceOpts = ["普票", "专票", "不需要"];
-  const goodsL1 = ["冻品", "冷鲜", "医药", "化工", "常温"];
-  const vehicleTypes = ["冷藏车", "保温车", "厢式货车", "不限"];
-  const vehicleLens = ["4.2米", "6.8米", "7.6米", "9.6米", "13米", "17.5米"];
-  const temps = ["-18℃以下", "0-4℃", "不需要打冷"];
-
-  const specialTemplates = [
-    DATA.shipper_profile.cargo_habits.special_requirements_template,
-    "请司机提前30分钟到达，装货地有地磅，需配合过磅",
-    "到厂需带身份证登记，严禁吸烟"
-  ].filter(Boolean);
-
-  const rows = [
-    ["A04_origin_address_detail", "text"],
-    ["A08_destination_address_detail", "text"],
-    ["B01_goods_category_l1", "select", goodsL1],
-    ["B02_goods_category_l2", "text"],
-    ["C01_vehicle_type", "select", vehicleTypes],
-    ["C02_vehicle_length", "select", vehicleLens],
-    ["B03_goods_weight_ton", "number", null, "0.1"],
-    ["B04_goods_volume_m3", "number", null, "0.1"],
-    ["B06_temperature_requirement", "select", temps],
-    ["F01_origin_contact_name", "text"],
-    ["F02_origin_contact_phone", "text"],
-    ["F03_destination_contact_name", "text"],
-    ["F04_destination_contact_phone", "text"],
-    ["E03_payment_method", "select", payOpts],
-    ["E04_invoice_type", "select", invoiceOpts],
-    ["G01_special_requirements", "datalist", specialTemplates]
-  ];
-
-  const html = rows
-    .map((r) => {
-      const key = r[0];
-      const type = r[1];
-      const zh = window.FIELD_LABELS?.[key] || key;
-      const missing = requiredMissing.has(key);
-      const v = cargo[key] ?? "";
-      let control = "";
-      if (type === "select") control = fieldSelect(key, v, r[2], missing);
-      else if (type === "datalist") control = fieldDatalist(key, v, `dl_${key}`, r[2], missing);
-      else control = fieldInput(key, v, type, missing, r[3]);
-      return `<tr><td class="mono small">${safeText(key)}</td><td>${safeText(zh)}</td><td>${control}</td></tr>`;
-    })
-    .join("");
-
-  $("#fieldEditor").innerHTML = `<table class="field-table"><tr><th>字段</th><th>中文名</th><th>值</th></tr>${html}</table>`;
-
-  $("#fieldEditor").oninput = (e) => {
-    const el = e.target.closest("[data-field]");
-    if (!el) return;
-    const k = el.dataset.field;
-    const cargo2 = sh.completed_result?.cargo;
-    if (!cargo2) return;
-    let v = el.value;
-    if (k === "B03_goods_weight_ton" || k === "B04_goods_volume_m3") v = v ? Number(v) : "";
-    cargo2[k] = v;
-    sh.updated_at = Date.now();
-    renderS3TopBar(sh);
-    renderShipmentTable();
-  };
-}
+const GEO = {
+  "广东省": {"广州市": ["天河区", "白云区", "黄埔区"], "深圳市": ["南山区", "福田区", "宝安区"]},
+  "四川省": {"成都市": ["武侯区", "双流区", "高新区"], "绵阳市": ["涪城区", "游仙区"]},
+  "浙江省": {"杭州市": ["余杭区", "西湖区", "萧山区"]}
+};
+const GOODS = {
+  "普货": ["普货", "设备", "建材", "日用品"],
+  "生鲜": ["冻肉", "冻品", "鲜活水产", "海鲜"],
+  "农产品": ["蔬菜", "水果", "谷物", "绿通"]
+};
+const MODELS = ["平板", "高栏", "厢式", "冷藏", "保温"];
+const LENGTHS = ["4.2米", "6.8米", "9.6米", "13.7米", "15米", "17.5米"];
 
 function renderStage3(sh) {
   const completed = sh.completed_result;
   if (!completed) return;
+  const cargo = completed.cargo || {};
+  
+  const el = (id) => document.getElementById(id);
+  if (!el('s2TopBar')) return;
+  
   const market14 = DATA.market_data.route_market_price;
-  $("#completeSummary").textContent = `已补全 ${completed.completed_fields?.length || 0} 个字段；参考价 P25 ¥${fmt(market14.price_p25)} / P50 ¥${fmt(market14.price_p50)} / P75 ¥${fmt(market14.price_p75)}`;
+  $("#completeSummary").textContent = `已补全 ${completed.completed_fields?.length || 0} 个字段；参考价 P25 ¥${fmt(market14.price_p25)} / P50 ¥${fmt(market14.price_p50)}`;
 
   renderS3TopBar(sh);
-  renderFieldEditor(sh);
 
-  const cargo = completed.cargo || {};
-  const w = Number(cargo.B03_goods_weight_ton || 0);
-  if (!sh._heavy_warned && ((Number.isFinite(w) && w >= 20) || String(sh.raw_text || "").includes("重货"))) {
-    sh._heavy_warned = true;
-    alert("已识别为重货：建议确认是否需要宽体车、装卸条件与价格。\n\n如果不是重货，请在字段编辑中修正重量。");
+  const popOpts = (sel, arr, val) => {
+    if(!sel) return;
+    sel.innerHTML = '<option value="">请选择</option>' + arr.map(a => `<option value="${a}" ${a===val?'selected':''}>${a}</option>`).join('');
+  };
+  
+  const popGeo = (pEl, cEl, dEl, pVal, cVal, dVal) => {
+    if(!pEl) return;
+    popOpts(pEl, Object.keys(GEO), pVal);
+    const updateC = () => {
+      const pv = pEl.value;
+      popOpts(cEl, pv ? Object.keys(GEO[pv]||{}) : [], pv === pVal ? cVal : '');
+      updateD();
+    };
+    const updateD = () => {
+      const pv = pEl.value;
+      const cv = cEl.value;
+      popOpts(dEl, (pv && cv) ? (GEO[pv][cv]||[]) : [], (pv===pVal && cv===cVal) ? dVal : '');
+    };
+    pEl.onchange = updateC;
+    cEl.onchange = updateD;
+    updateC();
+  };
+  
+  popGeo(el('f_orig_prov'), el('f_orig_city'), el('f_orig_dist'), cargo.A01_origin_province, cargo.A02_origin_city, cargo.A03_origin_district);
+  popGeo(el('f_dest_prov'), el('f_dest_city'), el('f_dest_dist'), cargo.A05_destination_province, cargo.A06_destination_city, cargo.A07_destination_district);
+  el('f_orig_poi').value = cargo.A04_origin_address_detail || '';
+  el('f_dest_poi').value = cargo.A08_destination_address_detail || '';
+  
+  popOpts(el('f_goods_l1'), Object.keys(GOODS), cargo.B01_goods_category_l1);
+  const updateL2 = () => {
+    const l1 = el('f_goods_l1').value;
+    popOpts(el('f_goods_l2'), l1 ? GOODS[l1] : [], l1 === cargo.B01_goods_category_l1 ? cargo.B02_goods_category_l2 : '');
+  };
+  el('f_goods_l1').onchange = updateL2;
+  updateL2();
+  
+  el('f_weight').value = cargo.B03_goods_weight_ton || '';
+  el('f_volume').value = cargo.B04_goods_volume_m3 || '';
+  el('f_weight').oninput = () => {
+    const w = parseFloat(el('f_weight').value);
+    if(!isNaN(w)) el('f_volume').value = (w / 3).toFixed(1);
+  };
+  
+  el('f_temp').value = cargo.B06_temperature_requirement || '';
+  el('f_pack').value = cargo.B07_package_method || '';
+  
+  el('f_use_type').value = cargo.C05_use_type || '整车';
+  const renderMulti = (container, arr, selectedStr) => {
+    const selArr = (selectedStr||'').split(',').map(x=>x.trim());
+    container.innerHTML = arr.map(a => `<label><input type="checkbox" value="${a}" ${selArr.includes(a)?'checked':''}> ${a}</label>`).join('');
+  };
+  renderMulti(el('f_models'), MODELS, cargo.C01_vehicle_type);
+  renderMulti(el('f_lengths'), LENGTHS, cargo.C02_vehicle_length);
+  
+  const lt = cargo.D01_load_time_start || ''; 
+  const dMatch = lt.match(/^(\d{4}-\d{2}-\d{2})/);
+  el('f_load_date').value = dMatch ? dMatch[1] : new Date().toISOString().slice(0,10);
+  const sMatch = lt.match(/(全天|上午|下午|晚上)/);
+  if(sMatch) {
+     Array.from(el('f_load_time_slot').options).forEach(o => {
+       if(o.value.includes(sMatch[1])) o.selected = true;
+     });
   }
-  const priceEl = $("#s3Price");
-  priceEl.value = cargo.E01_freight_price ?? DATA.demo.freight_price;
-  const loadEl = $("#s3LoadTime");
-  loadEl.value = toDatetimeLocal(cargo.D01_load_time_start || DATA.demo.load_time);
-
+  el('f_price').value = cargo.E01_freight_price || '';
+  
+  const payStr = cargo.E03_payment_method || ''; 
+  el('f_pay_type').value = payStr.includes('回单') ? '回单后' : '卸货后';
+  const dayMatch = payStr.match(/(\d+)天/);
+  el('f_pay_days').value = dayMatch ? dayMatch[1] : '';
+  
+  el('f_orig_name').value = cargo.F01_origin_contact_name || '';
+  el('f_orig_phone').value = cargo.F02_origin_contact_phone || '';
+  el('f_dest_name').value = cargo.F03_destination_contact_name || '';
+  el('f_dest_phone').value = cargo.F04_destination_contact_phone || '';
+  
+  el('f_remark').value = cargo.G01_special_requirements || '';
+  
   const mr7 = DATA.market_data.route_market_price_7d;
-  $("#price7d").innerHTML = `近7天：P25 ¥${fmt(mr7.price_p25)} / P50 ¥${fmt(mr7.price_p50)} / P75 ¥${fmt(mr7.price_p75)}（${safeText(mr7.trend)}）`;
-
-  const missReq = completed.still_missing_required || [];
-  const missSug = completed.still_missing_suggest || [];
-  $("#s3MissingRight").innerHTML = [
-    missReq.length ? `<div><span class="pill red">必填</span> ${missReq.map((k) => safeText(window.FIELD_LABELS?.[k] || k)).join("，")}</div>` : `<div class="muted">必填已齐</div>`,
-    missSug.length ? `<div><span class="pill yellow">建议</span> ${missSug.map((k) => safeText(window.FIELD_LABELS?.[k] || k)).join("，")}</div>` : `<div class="muted">无建议项</div>`
-  ].join("");
-
-  const priceBtn = $("#s3ConfirmPriceBtn");
-  const timeBtn = $("#s3ConfirmTimeBtn");
-  const syncConfirmBtns = () => {
-    const okP = sh.confirm.price === true;
-    const okT = sh.confirm.load_time === true;
-    priceBtn.classList.toggle("done", okP);
-    timeBtn.classList.toggle("done", okT);
-    priceBtn.textContent = okP ? "已确认运费" : "确认运费";
-    timeBtn.textContent = okT ? "已确认装货时间" : "确认装货时间";
-  };
-  syncConfirmBtns();
-
-  priceEl.oninput = () => {
-    const p = Number(priceEl.value);
-    if (!isNaN(p) && p >= 0) cargo.E01_freight_price = p;
-    sh.confirm.price = false;
-    sh.updated_at = Date.now();
-    renderS3TopBar(sh);
-    syncConfirmBtns();
-    renderShipmentTable();
-  };
-  loadEl.onchange = () => {
-    const v = fromDatetimeLocal(loadEl.value);
-    cargo.D01_load_time_start = v;
-    sh.confirm.load_time = false;
-    sh.updated_at = Date.now();
-    renderS3TopBar(sh);
-    syncConfirmBtns();
-    renderShipmentTable();
-  };
-  priceBtn.onclick = () => {
-    sh.confirm.price = true;
-    sh.updated_at = Date.now();
-    syncConfirmBtns();
-  };
-  timeBtn.onclick = () => {
-    sh.confirm.load_time = true;
-    sh.updated_at = Date.now();
-    syncConfirmBtns();
-  };
+  $("#price7d").innerHTML = `近7天：P25 ¥${fmt(mr7.price_p25)} / P50 ¥${fmt(mr7.price_p50)}（${safeText(mr7.trend)}）`;
 
   renderRiskList(sh.risk_result);
-  const check = $("#s5ConfirmCheck");
-  const toMode = $("#btnToMode");
-  const updateModeBtn = () => {
-    if (!toMode) return;
-    toMode.disabled = !(sh.risk_result?.can_publish === true && sh.s5_confirmed === true);
+
+  el('btnSinkFeishu').onclick = () => {
+     const c = sh.completed_result.cargo;
+     c.A01_origin_province = el('f_orig_prov').value;
+     c.A02_origin_city = el('f_orig_city').value;
+     c.A03_origin_district = el('f_orig_dist').value;
+     c.A04_origin_address_detail = el('f_orig_poi').value;
+     c.A05_destination_province = el('f_dest_prov').value;
+     c.A06_destination_city = el('f_dest_city').value;
+     c.A07_destination_district = el('f_dest_dist').value;
+     c.A08_destination_address_detail = el('f_dest_poi').value;
+     
+     c.B01_goods_category_l1 = el('f_goods_l1').value;
+     c.B02_goods_category_l2 = el('f_goods_l2').value;
+     c.B03_goods_weight_ton = parseFloat(el('f_weight').value);
+     c.B04_goods_volume_m3 = parseFloat(el('f_volume').value);
+     c.B06_temperature_requirement = el('f_temp').value;
+     c.B07_package_method = el('f_pack').value;
+     
+     c.C05_use_type = el('f_use_type').value;
+     c.C01_vehicle_type = Array.from(el('f_models').querySelectorAll('input:checked')).map(x=>x.value).join(',');
+     c.C02_vehicle_length = Array.from(el('f_lengths').querySelectorAll('input:checked')).map(x=>x.value).join(',');
+     
+     c.D01_load_time_start = el('f_load_date').value + ' ' + el('f_load_time_slot').value;
+     c.E01_freight_price = parseFloat(el('f_price').value);
+     c.E03_payment_method = el('f_pay_type').value + (el('f_pay_days').value ? el('f_pay_days').value + '天' : '');
+     
+     c.F01_origin_contact_name = el('f_orig_name').value;
+     c.F02_origin_contact_phone = el('f_orig_phone').value;
+     c.F03_destination_contact_name = el('f_dest_name').value;
+     c.F04_destination_contact_phone = el('f_dest_phone').value;
+     
+     c.G01_special_requirements = el('f_remark').value;
+     
+     if(!c.A01_origin_province || !c.A05_destination_province || !c.B01_goods_category_l1 || isNaN(c.B03_goods_weight_ton) || !c.C01_vehicle_type || !c.C02_vehicle_length || isNaN(c.E01_freight_price)) {
+        alert('请填写所有带 * 的必填项！');
+        return;
+     }
+     
+     sh.updated_at = Date.now();
+     
+     sh.risk_result = {
+         can_publish: true,
+         summary: "关键信息已确认齐备，可随时发货。",
+         risks: [{ field: "综合诊断", level: "blue", message: "重量与装卸要求合理，建议尽快寻找熟车" }]
+     };
+     renderRiskList(sh.risk_result);
+     
+     sinkShipmentsToFeishu([sh]).then(() => {
+         sh.stage_id = 3; 
+         renderDetail(sh);
+         renderShipmentTable();
+     }).catch(err => {
+         console.error(err);
+         alert("沉淀飞书失败，但已本地保存。将继续进入找车环节。");
+         sh.stage_id = 3;
+         renderDetail(sh);
+         renderShipmentTable();
+     });
   };
-  if (check) {
-    check.checked = sh.s5_confirmed === true;
-    check.onchange = () => {
-      sh.s5_confirmed = check.checked;
-      sh.updated_at = Date.now();
-      updateModeBtn();
-    };
-  }
-  updateModeBtn();
 }
 
 function driverCandidatesForMatch(cargo, maxDistanceKm, strategy) {

@@ -147,44 +147,158 @@
         </section>
 
         <section class="panel hidden" data-stage="2">
-          <h3>货源补全</h3>
-          <div id="completeSummary"></div>
-          <div id="s3TopBar" class="topbar"></div>
-          <div class="grid-2">
-            <div>
-              <h3>字段编辑（可直接改）</h3>
-              <div id="fieldEditor"></div>
-            </div>
-            <div>
-              <div class="callout warning">请确认运费与装货时间</div>
-              <div class="panel-mini">
-                <h3>缺失信息</h3>
-                <div id="s3MissingRight" class="small"></div>
-              </div>
-              <div class="panel-mini">
-                <label>运费（元）</label>
-                <input id="s3Price" type="number" min="0" step="1">
-                <div class="actions">
-                  <button id="s3ConfirmPriceBtn" class="confirm-btn">确认运费</button>
+          <h3>货源补全与确认</h3>
+          <div id="s2TopBar" class="topbar"></div>
+          <div id="completeSummary" style="margin-bottom: 1rem; font-weight: bold; color: var(--primary);"></div>
+          
+          <style>
+            .cargo-form fieldset { border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; background: #fafafa; }
+            .cargo-form legend { font-weight: 600; color: #1e293b; padding: 0 0.5rem; background: #fff; border-radius: 4px; border: 1px solid #e2e8f0; }
+            .cargo-form .form-row { display: flex; align-items: flex-start; margin-bottom: 0.8rem; }
+            .cargo-form .form-row > label { width: 100px; font-weight: 500; color: #475569; flex-shrink: 0; padding-top: 0.4rem; }
+            .cargo-form .form-group { display: flex; flex: 1; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+            .cargo-form select, .cargo-form input[type="text"], .cargo-form input[type="number"], .cargo-form input[type="date"], .cargo-form textarea { padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px; outline: none; }
+            .cargo-form select:focus, .cargo-form input:focus, .cargo-form textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1); }
+            .req { color: #ef4444; }
+            .unit { color: #64748b; font-size: 0.9rem; margin-right: 0.5rem; }
+            .multi-check label { cursor: pointer; display: inline-flex; align-items: center; margin-right: 10px; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid #e2e8f0; }
+          </style>
+
+          <form id="cargoForm" class="cargo-form">
+            <!-- 线路信息 -->
+            <fieldset>
+              <legend>📍 线路信息</legend>
+              <div class="form-row">
+                <label>装货地 <span class="req">*</span></label>
+                <div class="form-group">
+                  <select id="f_orig_prov"><option value="">省份</option></select>
+                  <select id="f_orig_city"><option value="">城市</option></select>
+                  <select id="f_orig_dist"><option value="">区县</option></select>
+                  <input type="text" id="f_orig_poi" placeholder="搜索POI/详细地址" style="flex: 2; min-width: 200px;">
                 </div>
-                <div id="price7d" class="board small"></div>
               </div>
-              <div class="panel-mini">
-                <label>最早装货时间</label>
-                <input id="s3LoadTime" type="datetime-local">
-                <div class="actions">
-                  <button id="s3ConfirmTimeBtn" class="confirm-btn">确认装货时间</button>
+              <div class="form-row">
+                <label>卸货地 <span class="req">*</span></label>
+                <div class="form-group">
+                  <select id="f_dest_prov"><option value="">省份</option></select>
+                  <select id="f_dest_city"><option value="">城市</option></select>
+                  <select id="f_dest_dist"><option value="">区县</option></select>
+                  <input type="text" id="f_dest_poi" placeholder="搜索POI/详细地址" style="flex: 2; min-width: 200px;">
                 </div>
               </div>
-            </div>
+            </fieldset>
+
+            <!-- 货物信息 -->
+            <fieldset>
+              <legend>📦 货物信息</legend>
+              <div class="form-row">
+                <label>品类 <span class="req">*</span></label>
+                <div class="form-group">
+                  <select id="f_goods_l1"><option value="">一级品类</option></select>
+                  <select id="f_goods_l2"><option value="">二级品类</option></select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>重量/体积 <span class="req">*</span></label>
+                <div class="form-group">
+                  <input type="number" id="f_weight" placeholder="重量" step="0.1" style="width:100px;"> <span class="unit">吨</span>
+                  <input type="number" id="f_volume" placeholder="体积" step="0.1" style="width:100px;"> <span class="unit">方</span>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>温度/包装 <span class="req">*</span></label>
+                <div class="form-group">
+                  <select id="f_temp">
+                    <option value="">温度要求</option><option value="冷冻">冷冻</option><option value="冷藏">冷藏</option><option value="常温">常温</option>
+                  </select>
+                  <select id="f_pack">
+                    <option value="">包装方式</option>
+                    <option value="托盘">托盘</option><option value="散装">散装</option><option value="纸箱">纸箱</option>
+                    <option value="木箱">木箱</option><option value="编织袋">编织袋</option><option value="吨袋">吨袋</option>
+                    <option value="桶装">桶装</option><option value="裸装">裸装</option>
+                  </select>
+                </div>
+              </div>
+            </fieldset>
+
+            <!-- 车辆要求 -->
+            <fieldset>
+              <legend>🚚 车辆要求</legend>
+              <div class="form-row">
+                <label>用车类型 <span class="req">*</span></label>
+                <div class="form-group">
+                  <select id="f_use_type"><option value="整车">整车</option><option value="零担">零担</option></select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>车型 <span class="req">*</span></label>
+                <div id="f_models" class="multi-check form-group"></div>
+              </div>
+              <div class="form-row">
+                <label>车长 <span class="req">*</span></label>
+                <div id="f_lengths" class="multi-check form-group"></div>
+              </div>
+            </fieldset>
+
+            <!-- 时间与费用 -->
+            <fieldset>
+              <legend>⏰ 时间与费用</legend>
+              <div class="form-row">
+                <label>装货时间 <span class="req">*</span></label>
+                <div class="form-group">
+                  <input type="date" id="f_load_date">
+                  <select id="f_load_time_slot">
+                    <option value="全天">全天</option><option value="上午(08:00-12:00)">上午(08:00-12:00)</option>
+                    <option value="下午(12:00-18:00)">下午(12:00-18:00)</option><option value="晚上(18:00-24:00)">晚上(18:00-24:00)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>运费(元) <span class="req">*</span></label>
+                <div class="form-group">
+                  <input type="number" id="f_price" placeholder="预估运费" style="width:120px;">
+                  <span id="price7d" class="muted small" style="margin-left:10px;"></span>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>付款周期 <span class="req">*</span></label>
+                <div class="form-group">
+                  <select id="f_pay_type"><option value="卸货后">卸货后</option><option value="回单后">回单后</option></select>
+                  <input type="number" id="f_pay_days" placeholder="天数" style="width:80px"> <span class="unit">天</span>
+                </div>
+              </div>
+            </fieldset>
+
+            <!-- 联系人与备注 -->
+            <fieldset>
+              <legend>👤 联系人与备注</legend>
+              <div class="form-row">
+                <label>装货联系人</label>
+                <div class="form-group">
+                  <input type="text" id="f_orig_name" placeholder="姓名">
+                  <input type="text" id="f_orig_phone" placeholder="电话">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>卸货联系人</label>
+                <div class="form-group">
+                  <input type="text" id="f_dest_name" placeholder="姓名">
+                  <input type="text" id="f_dest_phone" placeholder="电话">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>特殊要求</label>
+                <div class="form-group">
+                  <textarea id="f_remark" maxlength="200" placeholder="最高支持200字，如：需带篷布、三不超等" rows="2" style="width:100%;"></textarea>
+                </div>
+              </div>
+            </fieldset>
+          </form>
+
+          <div id="riskList" style="margin-top: 1rem;"></div>
+          <div class="actions" style="margin-top: 1.5rem; justify-content: center;">
+            <button id="btnSinkFeishu" class="primary-btn" style="font-size: 1.1rem; padding: 0.8rem 2rem; border-radius: 8px;">✅ 沉淀飞书 (自动诊断并进入发货)</button>
           </div>
-          <div class="actions">
-            <button id="btnDetailMatch">诊断</button>
-            <button id="btnToMode" disabled>进入发货模式</button>
-          </div>
-          <div id="riskSummary" class="small"></div>
-          <div id="riskList"></div>
-          <label class="small"><input id="s5ConfirmCheck" type="checkbox"> 我已确认以上关键信息无误</label>
         </section>
 
         <section class="panel hidden" data-stage="3">
