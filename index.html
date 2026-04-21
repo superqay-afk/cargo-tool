@@ -9,7 +9,7 @@
 <body>
   <header class="app-header">
     <h1>货源管理工作台</h1>
-    <div class="sub">快捷发货 -> 智能解析/补全 -> 快捷找车 -> 沉淀飞书</div>
+    <div class="sub">快捷发货 -> 智能解析/补全 -> 沉淀飞书 -> 快捷找车</div>
   </header>
   <main class="container">
     <section class="stage top-stage">
@@ -171,21 +171,25 @@
               <div class="form-row">
                 <label>装货地 <span class="req">*</span></label>
                 <div class="form-group">
+                  <select id="f_orig_history"><option value="">历史装货地</option></select>
                   <select id="f_orig_prov"><option value="">省份</option></select>
                   <select id="f_orig_city"><option value="">城市</option></select>
                   <select id="f_orig_dist"><option value="">区县</option></select>
                   <input type="text" id="f_orig_poi" placeholder="搜索POI/详细地址" style="flex: 2; min-width: 200px;">
                 </div>
               </div>
+              <div id="f_orig_poi_suggest" class="poi-suggest hidden"></div>
               <div class="form-row">
                 <label>卸货地 <span class="req">*</span></label>
                 <div class="form-group">
+                  <select id="f_dest_history"><option value="">历史卸货地</option></select>
                   <select id="f_dest_prov"><option value="">省份</option></select>
                   <select id="f_dest_city"><option value="">城市</option></select>
                   <select id="f_dest_dist"><option value="">区县</option></select>
                   <input type="text" id="f_dest_poi" placeholder="搜索POI/详细地址" style="flex: 2; min-width: 200px;">
                 </div>
               </div>
+              <div id="f_dest_poi_suggest" class="poi-suggest hidden"></div>
             </fieldset>
 
             <!-- 货物信息 -->
@@ -289,7 +293,7 @@
               <div class="form-row">
                 <label>特殊要求</label>
                 <div class="form-group">
-                  <textarea id="f_remark" maxlength="200" placeholder="最高支持200字，如：需带篷布、三不超等" rows="2" style="width:100%;"></textarea>
+                  <textarea id="f_remark" maxlength="200" placeholder="最高支持200字，如：需带篷布、三不超等" rows="5" style="width:100%;"></textarea>
                 </div>
               </div>
             </fieldset>
@@ -322,9 +326,6 @@
           <div id="matchSummary"></div>
           <div id="driverCards" class="cards"></div>
           <div class="small muted">已选熟车：<span id="selectedDrivers" class="mono"></span></div>
-          <div class="actions">
-            <button id="btnDetailDispatch" disabled>沉淀飞书</button>
-          </div>
         </section>
 
         <section class="panel hidden" data-stage="4">

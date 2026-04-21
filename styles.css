@@ -5,6 +5,11 @@
 .dropdown > summary::-webkit-details-marker{display:none}
 .dropdown-menu{position:absolute;right:0;top:calc(100% + .45rem);min-width:220px;background:#fff;border:1px solid #e2e8f0;border-radius:.75rem;box-shadow:0 10px 15px -3px rgba(0,0,0,.12);padding:.45rem;display:none;flex-direction:column;gap:.35rem;z-index:30}
 .dropdown[open] .dropdown-menu{display:flex}
+.poi-suggest{margin:-.4rem 0 .8rem 100px;max-width:720px;background:#fff;border:1px solid #e2e8f0;border-radius:.6rem;box-shadow:0 10px 15px -3px rgba(0,0,0,.08);padding:.35rem;display:flex;flex-direction:column;gap:.25rem}
+.poi-item{padding:.45rem .55rem;border-radius:.5rem;cursor:pointer}
+.poi-item:hover{background:#eef2ff}
+.poi-item .t{font-weight:600;color:#0f172a}
+.poi-item .s{font-size:.78rem;color:#64748b;margin-top:.15rem}
 .dropdown-menu button{width:100%;text-align:left}
 #feishuHint:empty{display:none}
 .callout{border-left:4px solid #94a3b8;background:#f1f5f9;padding:.6rem .8rem;border-radius:.4rem}

@@ -114,6 +114,17 @@ async function parseSingleRaw(raw) {
   return { parsed, unrecognized, summary, raw_text_used: text.slice(0, 240) };
 }
 
+function maybeAlertHeavyCargo(sh) {
+  if (!sh || sh.heavy_warned === true) return;
+  const w = sh.parsed_result?.parsed?.B03_goods_weight_ton?.value;
+  const n = parseFloat(String(w ?? "").replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(n)) return;
+  if (n >= 30) {
+    sh.heavy_warned = true;
+    alert(`识别到重货：约 ${n} 吨。\n\n建议确认：装卸要求、车型/车长、过磅、运费与限行。`);
+  }
+}
+
 function completeCargoFromParsed(parsedFields) {
   const cargo = {};
   Object.entries(parsedFields || {}).forEach(([k, v]) => {
@@ -432,6 +443,7 @@ function renderShipmentTable() {
 async function runNextStep(sh) {
   if (sh.stage_id === 1) {
     if (!sh.parsed_result) sh.parsed_result = await parseSingleRaw(sh.raw_text);
+    maybeAlertHeavyCargo(sh);
     sh.completed_result = completeCargoFromParsed(sh.parsed_result?.parsed || {});
     sh.stage_id = 2;
     sh.local_status = "pending_review";
@@ -456,13 +468,6 @@ async function runNextStep(sh) {
       openDetail(sh.id);
       return;
     }
-    sh.stage_id = 3;
-    sh.local_status = "ready";
-  } else if (sh.stage_id === 3) {
-    if (!sh.risk_result?.can_publish) {
-      sh.blocked = true;
-      return;
-    }
     const mapping = ensureDispatchMappings(sh);
     if (!mapping.ok) {
       alert(mapping.message || "字段映射校验失败");
@@ -472,8 +477,14 @@ async function runNextStep(sh) {
     const sink = await sinkShipmentsToFeishu([sh]);
     if (!sink.ok) {
       alert(sink.message || "沉淀飞书失败");
+      openDetail(sh.id);
       return;
     }
+    sh.local_status = "sunk_feishu";
+    sh.stage_id = 3;
+  } else if (sh.stage_id === 3) {
+    openDetail(sh.id);
+    return;
   }
   sh.updated_at = Date.now();
   renderShipmentTable();
@@ -513,7 +524,11 @@ function renderStepper(sh) {
 
 function showStagePanel(stageId) {
   const panelId = Number(stageId || 1);
-  $$(".panel").forEach((p) => p.classList.toggle("hidden", Number(p.dataset.stage) !== panelId));
+  $$(".panel").forEach((p) => {
+    const sid = Number(p.dataset.stage);
+    const show = panelId === 2 ? (sid === 1 || sid === 2) : sid === panelId;
+    p.classList.toggle("hidden", !show);
+  });
 }
 
 function renderParsedTable(parsed) {
@@ -666,7 +681,17 @@ const GOODS = {
   "农产品": ["蔬菜", "水果", "谷物", "绿通"]
 };
 const MODELS = ["平板", "高栏", "厢式", "冷藏", "保温"];
-const LENGTHS = ["4.2米", "6.8米", "9.6米", "13.7米", "15米", "17.5米"];
+const LENGTHS = ["4.2米", "6.8米", "9.6米", "13米", "13.7米", "15米", "17.5米"];
+
+const POIS = [
+  { id: "poi_cd_qy_ghd_1", province: "四川省", city: "成都市", district: "青羊区", level: 5, title: "青羊区光华大道-仓库A", sub: "四川省成都市青羊区光华大道三段88号1栋（可进17.5米）" },
+  { id: "poi_cd_wuh_1", province: "四川省", city: "成都市", district: "武侯区", level: 5, title: "武侯区天府三街-冷库", sub: "四川省成都市武侯区天府三街199号B区（需提前30分钟）" },
+  { id: "poi_cd_sl_1", province: "四川省", city: "成都市", district: "双流区", level: 5, title: "双流机场路-物流园", sub: "四川省成都市双流区机场路三段6号XX物流园3号门" },
+  { id: "poi_gz_by_1", province: "广东省", city: "广州市", district: "白云区", level: 4, title: "白云区石井-市场", sub: "广东省广州市白云区石井街道X路X号（卸货排队）" },
+  { id: "poi_gz_th_1", province: "广东省", city: "广州市", district: "天河区", level: 3, title: "天河区-园区", sub: "广东省广州市天河区XXX园区" },
+  { id: "poi_sz_ns_1", province: "广东省", city: "深圳市", district: "南山区", level: 4, title: "南山区科技园-门店", sub: "广东省深圳市南山区科技园科兴路88号" },
+  { id: "poi_hz_xh_1", province: "浙江省", city: "杭州市", district: "西湖区", level: 4, title: "西湖区文三路-仓库", sub: "浙江省杭州市西湖区文三路XXX号" }
+];
 
 function renderStage3(sh) {
   const completed = sh.completed_result;
@@ -675,6 +700,7 @@ function renderStage3(sh) {
   
   const el = (id) => document.getElementById(id);
   if (!el('s2TopBar')) return;
+  sh.ui = sh.ui || {};
   
   const market14 = DATA.market_data.route_market_price;
   $("#completeSummary").textContent = `已补全 ${completed.completed_fields?.length || 0} 个字段；参考价 P25 ¥${fmt(market14.price_p25)} / P50 ¥${fmt(market14.price_p50)}`;
@@ -686,28 +712,159 @@ function renderStage3(sh) {
     sel.innerHTML = '<option value="">请选择</option>' + arr.map(a => `<option value="${a}" ${a===val?'selected':''}>${a}</option>`).join('');
   };
   
-  const popGeo = (pEl, cEl, dEl, pVal, cVal, dVal) => {
+  const popGeo = (pEl, cEl, dEl, pVal, cVal, dVal, onChange) => {
     if(!pEl) return;
     popOpts(pEl, Object.keys(GEO), pVal);
     const updateC = () => {
       const pv = pEl.value;
       popOpts(cEl, pv ? Object.keys(GEO[pv]||{}) : [], pv === pVal ? cVal : '');
       updateD();
+      if (onChange) onChange();
     };
     const updateD = () => {
       const pv = pEl.value;
       const cv = cEl.value;
       popOpts(dEl, (pv && cv) ? (GEO[pv][cv]||[]) : [], (pv===pVal && cv===cVal) ? dVal : '');
+      if (onChange) onChange();
     };
     pEl.onchange = updateC;
     cEl.onchange = updateD;
     updateC();
   };
   
-  popGeo(el('f_orig_prov'), el('f_orig_city'), el('f_orig_dist'), cargo.A01_origin_province, cargo.A02_origin_city, cargo.A03_origin_district);
-  popGeo(el('f_dest_prov'), el('f_dest_city'), el('f_dest_dist'), cargo.A05_destination_province, cargo.A06_destination_city, cargo.A07_destination_district);
-  el('f_orig_poi').value = cargo.A04_origin_address_detail || '';
-  el('f_dest_poi').value = cargo.A08_destination_address_detail || '';
+  const clearPoi = (poiInput, suggestBox) => {
+    if (!poiInput) return;
+    poiInput.dataset.poiId = "";
+    poiInput.dataset.poiLevel = "";
+    poiInput.dataset.poiTitle = "";
+    poiInput.dataset.poiSub = "";
+    if (suggestBox) suggestBox.classList.add("hidden");
+  };
+  const origPoiInput = el('f_orig_poi');
+  const destPoiInput = el('f_dest_poi');
+  const origSuggest = el('f_orig_poi_suggest');
+  const destSuggest = el('f_dest_poi_suggest');
+
+  popGeo(el('f_orig_prov'), el('f_orig_city'), el('f_orig_dist'), cargo.A01_origin_province, cargo.A02_origin_city, cargo.A03_origin_district, () => clearPoi(origPoiInput, origSuggest));
+  popGeo(el('f_dest_prov'), el('f_dest_city'), el('f_dest_dist'), cargo.A05_destination_province, cargo.A06_destination_city, cargo.A07_destination_district, () => clearPoi(destPoiInput, destSuggest));
+
+  const fillPoiInput = (poiInput, poi) => {
+    if (!poiInput || !poi) return;
+    poiInput.value = `${poi.title} ${poi.sub}`;
+    poiInput.dataset.poiId = poi.id;
+    poiInput.dataset.poiLevel = String(poi.level || "");
+    poiInput.dataset.poiTitle = poi.title || "";
+    poiInput.dataset.poiSub = poi.sub || "";
+  };
+
+  if (cargo.A04_origin_address_detail) origPoiInput.value = cargo.A04_origin_address_detail;
+  if (cargo.A08_destination_address_detail) destPoiInput.value = cargo.A08_destination_address_detail;
+
+  const histLoad = (k) => {
+    try { return JSON.parse(localStorage.getItem(k) || "[]") || []; } catch (e) { return []; }
+  };
+  const histSave = (k, list) => {
+    try { localStorage.setItem(k, JSON.stringify(list || [])); } catch (e) {}
+  };
+  const histUpsert = (k, poi) => {
+    const list = histLoad(k).filter((x) => x && x.id !== poi.id);
+    list.unshift(poi);
+    histSave(k, list.slice(0, 8));
+  };
+  const renderHistSelect = (sel, list) => {
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${sel.id === "f_orig_history" ? "历史装货地" : "历史卸货地"}</option>` + list.map((x) => `<option value="${safeText(x.id)}">${safeText(x.title)}</option>`).join("");
+  };
+
+  const bindPoiSearch = (side) => {
+    const isOrig = side === "orig";
+    const provEl = el(isOrig ? "f_orig_prov" : "f_dest_prov");
+    const cityEl = el(isOrig ? "f_orig_city" : "f_dest_city");
+    const distEl = el(isOrig ? "f_orig_dist" : "f_dest_dist");
+    const poiInput = el(isOrig ? "f_orig_poi" : "f_dest_poi");
+    const suggest = el(isOrig ? "f_orig_poi_suggest" : "f_dest_poi_suggest");
+    const histSel = el(isOrig ? "f_orig_history" : "f_dest_history");
+    const histKey = isOrig ? "hist_origin_poi" : "hist_dest_poi";
+
+    const refreshHist = () => renderHistSelect(histSel, histLoad(histKey));
+    refreshHist();
+
+    if (histSel) {
+      histSel.onchange = () => {
+        const id = histSel.value;
+        if (!id) return;
+        const list = histLoad(histKey);
+        const poi = list.find((x) => x.id === id);
+        if (!poi) return;
+        provEl.value = poi.province;
+        provEl.onchange && provEl.onchange();
+        cityEl.value = poi.city;
+        cityEl.onchange && cityEl.onchange();
+        distEl.value = poi.district;
+        distEl.onchange && distEl.onchange();
+        fillPoiInput(poiInput, poi);
+      };
+    }
+
+    let lastItems = [];
+    const renderSuggest = (items) => {
+      if (!suggest) return;
+      lastItems = items;
+      if (!items.length) {
+        suggest.classList.add("hidden");
+        suggest.innerHTML = "";
+        return;
+      }
+      suggest.innerHTML = items.map((x) => {
+        return `<div class="poi-item" data-poi="${safeText(x.id)}"><div class="t">${safeText(x.title)}</div><div class="s">${safeText(x.sub)}</div></div>`;
+      }).join("");
+      suggest.classList.remove("hidden");
+    };
+
+    const findCandidates = () => {
+      const kw = String(poiInput.value || "").trim();
+      const pv = String(provEl.value || "").trim();
+      const cv = String(cityEl.value || "").trim();
+      const dv = String(distEl.value || "").trim();
+      if (!pv || !cv || !dv || kw.length < 2) return [];
+      const list = POIS.filter((x) => x.province === pv && x.city === cv && x.district === dv && (`${x.title} ${x.sub}`).includes(kw)).slice(0, 8);
+      if (list.length) return list;
+      const minLv = isOrig ? 5 : 3;
+      return [
+        { id: `mock_${side}_1_${pv}_${cv}_${dv}_${kw}`, province: pv, city: cv, district: dv, level: minLv, title: `${dv}${kw}-门店`, sub: `${pv}${cv}${dv}${kw}路88号` },
+        { id: `mock_${side}_2_${pv}_${cv}_${dv}_${kw}`, province: pv, city: cv, district: dv, level: minLv, title: `${dv}${kw}-仓库`, sub: `${pv}${cv}${dv}${kw}大道199号` },
+        { id: `mock_${side}_3_${pv}_${cv}_${dv}_${kw}`, province: pv, city: cv, district: dv, level: minLv, title: `${dv}${kw}-物流园`, sub: `${pv}${cv}${dv}${kw}物流园3号门` }
+      ];
+    };
+
+    if (poiInput) {
+      poiInput.oninput = () => {
+        clearPoi(poiInput, suggest);
+        renderSuggest(findCandidates());
+      };
+      poiInput.onfocus = () => {
+        if (!poiInput.dataset.poiId) renderSuggest(findCandidates());
+      };
+      poiInput.onblur = () => setTimeout(() => suggest && suggest.classList.add("hidden"), 150);
+    }
+
+    if (suggest) {
+      suggest.onclick = (e) => {
+        const it = e.target.closest(".poi-item");
+        if (!it) return;
+        const id = it.dataset.poi;
+        const poi = lastItems.find((x) => x.id === id);
+        if (!poi) return;
+        fillPoiInput(poiInput, poi);
+        histUpsert(histKey, poi);
+        refreshHist();
+        suggest.classList.add("hidden");
+      };
+    }
+  };
+
+  bindPoiSearch("orig");
+  bindPoiSearch("dest");
   
   popOpts(el('f_goods_l1'), Object.keys(GOODS), cargo.B01_goods_category_l1);
   const updateL2 = () => {
@@ -719,9 +876,27 @@ function renderStage3(sh) {
   
   el('f_weight').value = cargo.B03_goods_weight_ton || '';
   el('f_volume').value = cargo.B04_goods_volume_m3 || '';
+  if (sh.ui.volume_manual !== true) sh.ui.volume_manual = false;
+  if (sh.ui.volume_autofilled !== true) sh.ui.volume_autofilled = false;
+  el('f_volume').oninput = () => {
+    const v = String(el('f_volume').value || "").trim();
+    if (!v) {
+      sh.ui.volume_manual = false;
+      sh.ui.volume_autofilled = false;
+      return;
+    }
+    sh.ui.volume_manual = true;
+    sh.ui.volume_autofilled = false;
+  };
   el('f_weight').oninput = () => {
     const w = parseFloat(el('f_weight').value);
-    if(!isNaN(w)) el('f_volume').value = (w / 3).toFixed(1);
+    if (isNaN(w)) return;
+    if (sh.ui.volume_manual === true) return;
+    const cur = String(el('f_volume').value || "").trim();
+    if (!cur || sh.ui.volume_autofilled === true) {
+      el('f_volume').value = (w / 3).toFixed(1);
+      sh.ui.volume_autofilled = true;
+    }
   };
   
   el('f_temp').value = cargo.B06_temperature_requirement || '';
@@ -796,38 +971,87 @@ function renderStage3(sh) {
      
      c.G01_special_requirements = el('f_remark').value;
      
-     if(!c.A01_origin_province || !c.A05_destination_province || !c.B01_goods_category_l1 || isNaN(c.B03_goods_weight_ton) || !c.C01_vehicle_type || !c.C02_vehicle_length || isNaN(c.E01_freight_price)) {
-        alert('请填写所有带 * 的必填项！');
-        return;
+     const errors = [];
+     const req = (ok, msg) => { if (!ok) errors.push(msg); };
+     const oPoiLevel = Number(el('f_orig_poi').dataset.poiLevel || 0);
+     const dPoiLevel = Number(el('f_dest_poi').dataset.poiLevel || 0);
+     req(Boolean(c.A01_origin_province && c.A02_origin_city && c.A03_origin_district), "装货地省市区必填");
+     req(Boolean(el('f_orig_poi').dataset.poiId), "装货详细地址必须从搜索结果中选择（POI）");
+     req(oPoiLevel >= 5, "装货地必须到五级地址（请选更精确的POI）");
+     req(Boolean(c.A05_destination_province && c.A06_destination_city && c.A07_destination_district), "卸货地省市区必填");
+     req(Boolean(el('f_dest_poi').dataset.poiId), "卸货详细地址必须从搜索结果中选择（POI）");
+     req(dPoiLevel >= 3, "卸货地至少到三级地址（请选POI）");
+     req(Boolean(c.B01_goods_category_l1), "一级品类必填");
+     req(Boolean(c.B02_goods_category_l2), "二级品类必填");
+     req(Number.isFinite(c.B03_goods_weight_ton) && c.B03_goods_weight_ton > 0, "重量必填");
+     req(Boolean(c.B06_temperature_requirement), "温度要求必填");
+     req(Boolean(c.B07_package_method), "包装方式必填");
+     req(Boolean(c.C05_use_type), "用车类型必填");
+     req(Boolean(c.C01_vehicle_type), "车型必填（至少选1个）");
+     req(Boolean(c.C02_vehicle_length), "车长必填（至少选1个）");
+     req(Boolean(el('f_load_date').value) && Boolean(el('f_load_time_slot').value), "装货时间必填");
+     req(Number.isFinite(c.E01_freight_price) && c.E01_freight_price > 0, "运费必填");
+     const payDays = Number(el('f_pay_days').value);
+     req(Boolean(el('f_pay_type').value), "付款周期必填");
+     req(Number.isFinite(payDays) && payDays >= 0, "付款周期天数必填");
+
+     if (errors.length) {
+       alert(errors.join("\n"));
+       return;
      }
-     
-     sh.updated_at = Date.now();
-     
-     sh.risk_result = {
-         can_publish: true,
-         summary: "关键信息已确认齐备，可随时发货。",
-         risks: [{ field: "综合诊断", level: "blue", message: "重量与装卸要求合理，建议尽快寻找熟车" }]
-     };
+
+     sh.risk_result = diagnoseRisks(c);
+     sh.blocked = !sh.risk_result.can_publish;
      renderRiskList(sh.risk_result);
-     
-     sinkShipmentsToFeishu([sh]).then(() => {
-         sh.stage_id = 3; 
-         renderDetail(sh);
-         renderShipmentTable();
+     if (!sh.risk_result.can_publish) {
+       alert("诊断发现阻断项，请先补齐/修正后再沉淀飞书");
+       return;
+     }
+
+     sh.updated_at = Date.now();
+
+     sinkShipmentsToFeishu([sh]).then((rs) => {
+       sh.local_status = "sunk_feishu";
+       sh.stage_id = 3;
+       sh.updated_at = Date.now();
+       renderDetail(sh);
+       renderShipmentTable();
      }).catch(err => {
-         console.error(err);
-         alert("沉淀飞书失败，但已本地保存。将继续进入找车环节。");
-         sh.stage_id = 3;
-         renderDetail(sh);
-         renderShipmentTable();
+       console.error(err);
+       alert("沉淀飞书失败（网络/权限原因）。已本地保存，将继续进入找车环节。");
+       sh.stage_id = 3;
+       sh.updated_at = Date.now();
+       renderDetail(sh);
+       renderShipmentTable();
      });
   };
 }
 
 function driverCandidatesForMatch(cargo, maxDistanceKm, strategy) {
+  const parseList = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const normType = (t) => {
+    const v = String(t || "").trim();
+    if (!v) return "";
+    if (v.endsWith("车")) return v;
+    if (v === "冷藏") return "冷藏车";
+    if (v === "保温") return "保温车";
+    return v;
+  };
+  const needTypes = parseList(cargo.C01_vehicle_type).map(normType).filter(Boolean);
+  const needLens = parseList(cargo.C02_vehicle_length);
+  const typeHit = (dType) => {
+    const dt = String(dType || "").trim();
+    if (!needTypes.length) return true;
+    return needTypes.some((x) => dt === x || dt.includes(x) || x.includes(dt));
+  };
+  const lenHit = (dLen) => {
+    const dl = String(dLen || "").trim();
+    if (!needLens.length) return true;
+    return needLens.some((x) => dl === x || dl.includes(x) || x.includes(dl));
+  };
   const base = DATA.driver_pool
-    .filter((d) => d.vehicle_type === (cargo.C01_vehicle_type || "冷藏车"))
-    .filter((d) => d.vehicle_length === (cargo.C02_vehicle_length || "9.6米"))
+    .filter((d) => typeHit(d.vehicle_type))
+    .filter((d) => lenHit(d.vehicle_length))
     .filter((d) => (cargo.C03_vehicle_width_wide ? d.vehicle_width_wide : true))
     .filter((d) => (cargo.C04_cold_machine_required ? d.cold_machine !== false : true))
     .filter((d) => (d.distance_to_origin_km ?? 9999) <= maxDistanceKm);
@@ -1005,12 +1229,6 @@ function renderStage4(sh) {
   $("#matchSummary").textContent = `${sh.match.max_distance_km || 200}km 范围内 ${sh.matched_drivers.length} 位司机 ${note}`;
   $("#selectedDrivers").textContent = Array.from(sh.selected_driver_ids).join(", ");
   renderDriverCards(sh);
-
-  const btn = $("#btnDetailDispatch");
-  if (btn) {
-    btn.disabled = !(sh.risk_result?.can_publish === true);
-    btn.textContent = "沉淀飞书";
-  }
 }
 
 function renderSinkSummary(sh) {
@@ -1124,6 +1342,7 @@ async function handleCreateFromPaste() {
   for (const sh of added) {
     if (sh.stage_id === 1) {
       sh.parsed_result = await parseSingleRaw(sh.raw_text);
+      maybeAlertHeavyCargo(sh);
       // 解析结果检查：如果没有解析出关键字段（如路线），标记为阻断
       if (!sh.parsed_result.parsed.A02_origin_city || !sh.parsed_result.parsed.A06_destination_city) {
         sh.blocked = true;
@@ -1224,6 +1443,7 @@ async function batchParse() {
   for (const sh of state.shipments) {
     if (sh.stage_id === 1) {
       sh.parsed_result = await parseSingleRaw(sh.raw_text);
+      maybeAlertHeavyCargo(sh);
       sh.stage_id = 1;
       sh.updated_at = Date.now();
       n += 1;
@@ -1324,6 +1544,8 @@ function bindDetailActions() {
     btn.textContent = "解析中...";
     sh.raw_text = $("#detailRaw").value.trim();
     sh.parsed_result = await parseSingleRaw(sh.raw_text);
+    maybeAlertHeavyCargo(sh);
+    sh.completed_result = completeCargoFromParsed(sh.parsed_result?.parsed || {});
     sh.stage_id = 2;
     sh.blocked = false;
     sh.updated_at = Date.now();
@@ -1333,7 +1555,8 @@ function bindDetailActions() {
     renderShipmentTable();
   };
 
-  $("#btnDetailComplete").onclick = () => {
+  const btnDetailComplete = $("#btnDetailComplete");
+  if (btnDetailComplete) btnDetailComplete.onclick = () => {
     const sh = getSelected();
     if (!sh) return;
     sh.completed_result = completeCargoFromParsed(sh.parsed_result?.parsed || {});
@@ -1346,7 +1569,8 @@ function bindDetailActions() {
     renderShipmentTable();
   };
 
-  $("#btnDetailMatch").onclick = () => {
+  const btnDetailMatch = $("#btnDetailMatch");
+  if (btnDetailMatch) btnDetailMatch.onclick = () => {
     const sh = getSelected();
     if (!sh) return;
     if (!(sh.confirm?.price === true && sh.confirm?.load_time === true)) {
@@ -1363,7 +1587,8 @@ function bindDetailActions() {
     renderShipmentTable();
   };
 
-  $("#btnToMode").onclick = () => {
+  const btnToMode = $("#btnToMode");
+  if (btnToMode) btnToMode.onclick = () => {
     const sh = getSelected();
     if (!sh) return;
     if (sh.risk_result?.can_publish !== true) {
@@ -1376,27 +1601,6 @@ function bindDetailActions() {
     renderShipmentTable();
   };
 
-  $("#btnDetailDispatch").onclick = () => {
-    const sh = getSelected();
-    if (!sh) return;
-    if (!sh.risk_result?.can_publish) return;
-    const mapping = ensureDispatchMappings(sh);
-    if (!mapping.ok) {
-      alert(mapping.message || "字段映射校验失败");
-      return;
-    }
-    sinkShipmentsToFeishu([sh]).then((rs) => {
-      if (!rs.ok) {
-        alert(rs.message || "沉淀飞书失败");
-        return;
-      }
-      sh.blocked = false;
-      sh.updated_at = Date.now();
-      renderDetail();
-      renderShipmentTable();
-      renderFeishuHint(`已沉淀飞书：创建 ${rs.created || 0} 条，更新 ${rs.updated || 0} 条`);
-    });
-  };
   const sinkBack = $("#btnBackToListFromSink");
   if (sinkBack) {
     sinkBack.onclick = () => {
