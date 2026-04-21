@@ -1600,7 +1600,7 @@ function feishuBackendBase() {
   const host = window.location.hostname;
   const port = String(window.location.port || "");
   if (host === "127.0.0.1" || host === "localhost") {
-    if (port === "8000") return "http://127.0.0.1:8787";
+    if (port && port !== "8787") return "http://127.0.0.1:8787";
     return window.location.origin;
   }
   return window.location.origin;
